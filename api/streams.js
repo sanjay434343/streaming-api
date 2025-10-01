@@ -1,45 +1,44 @@
-let cachedData = null;
-let lastFetch = 0;
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-const API_BASE = "https://iptv-org.github.io/api/";
-const files = [
-  "channels.json",
-  "feeds.json",
-  "streams.json",
-  "languages.json",
-  "categories.json",
-  "countries.json",
-  "logos.json",
-  "timezones.json"
-];
+  const {
+    limit,
+    channel,
+    language,
+    category,
+    country,
+    network,
+    owner
+  } = req.query;
 
-// Fetch and cache data (refresh every 1 hour)
-async function fetchAll() {
-  const now = Date.now();
-  if (cachedData && now - lastFetch < 3600_000) return cachedData;
+  const API_BASE = "https://iptv-org.github.io/api/";
 
-  const [
-    channels,
-    feeds,
-    streams,
-    languages,
-    categories,
-    countries,
-    logos,
-    timezones
-  ] = await Promise.all(files.map(f => fetch(API_BASE + f).then(r => r.json())));
+  const files = [
+    "channels.json",
+    "feeds.json",
+    "streams.json",
+    "languages.json",
+    "categories.json",
+    "countries.json",
+    "logos.json",
+    "timezones.json"
+  ];
 
-  const languagesMap = Object.fromEntries(languages.map(l => [l.code, l.name]));
-  const categoriesMap = Object.fromEntries(categories.map(c => [c.id, c.name]));
-  const countriesMap = Object.fromEntries(countries.map(c => [c.code, c.name]));
-  const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
-  const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
+  try {
+    const [channels, feeds, streams, languages, categories, countries, logos, timezones] =
+      await Promise.all(files.map(f => fetch(API_BASE + f).then(r => r.json())));
 
-  // Merge feeds with streams
-  const feedsMap = feeds.map(f => {
-    const fStreams = streams
-      .filter(s => s.feed === f.id || s.channel === f.channel)
-      .map(s => ({
+    const languagesMap = Object.fromEntries(languages.map(l => [l.code, l.name]));
+    const categoriesMap = Object.fromEntries(categories.map(c => [c.id, c.name]));
+    const countriesMap = Object.fromEntries(countries.map(c => [c.code, c.name]));
+    const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
+    const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
+
+    // Merge feeds with streams for quick lookup
+    const feedsMap = feeds.map(f => {
+      const fStreams = streams.filter(s => s.feed === f.id || s.channel === f.channel).map(s => ({
         id: s.quality || "SD",
         name: s.quality || "SD",
         is_main: s.quality === "SD",
@@ -49,33 +48,21 @@ async function fetchAll() {
         format: s.quality || "576i",
         url: s.url || null
       }));
-    return { ...f, streams: fStreams };
-  });
 
-  cachedData = { channels, feedsMap, languagesMap, categoriesMap, countriesMap, logosMap, timezonesMap };
-  lastFetch = now;
-  return cachedData;
-}
+      return { ...f, streams: fStreams };
+    });
 
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  const { limit, channel, language, category, country, network, owner } = req.query;
-
-  try {
-    const { channels, feedsMap, languagesMap, categoriesMap, countriesMap, logosMap, timezonesMap } =
-      await fetchAll();
-
+    // Build enriched channel data
     let enrichedChannels = channels.map(ch => {
       const chFeeds = feedsMap.filter(f => f.channel === ch.id);
 
+      // Get languages from channel or feeds
       let langs = ch.languages?.map(c => languagesMap[c] || c) || [];
       if (!langs.length) {
         langs = [...new Set(chFeeds.flatMap(f => f.languages.map(c => languagesMap[c] || c)))];
       }
 
+      // Merge all streams from feeds
       const allStreams = chFeeds.flatMap(f => f.streams.length ? f.streams : [{
         id: "SD",
         name: "SD",
@@ -87,10 +74,12 @@ export default async function handler(req, res) {
         url: null
       }]);
 
+      // Determine main stream (highest quality)
       const mainStream = allStreams.find(s => s.format?.includes("1080")) ||
                          allStreams.find(s => s.format?.includes("720")) ||
                          allStreams[0];
 
+      // Merge categories
       const chCategories = ch.categories?.map(cid => categoriesMap[cid] || cid) || [];
 
       return {
@@ -113,7 +102,7 @@ export default async function handler(req, res) {
       };
     });
 
-    // Advanced filtering
+    // Apply advanced filters
     enrichedChannels = enrichedChannels.filter(ch => {
       if (channel && !ch.name.toLowerCase().includes(channel.toLowerCase())) return false;
       if (language && !ch.languages.some(l => l.toLowerCase().includes(language.toLowerCase()))) return false;
@@ -124,15 +113,16 @@ export default async function handler(req, res) {
       return true;
     });
 
-    // Limit results
+    // Apply limit
     if (limit && limit.toLowerCase() !== "all") {
       const n = parseInt(limit);
       if (!isNaN(n)) enrichedChannels = enrichedChannels.slice(0, n);
     }
 
     res.status(200).json({ count: enrichedChannels.length, data: enrichedChannels });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch IPTV data" });
+    res.status(500).json({ error: "Failed to fetch or merge IPTV data" });
   }
 }
