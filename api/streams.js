@@ -13,24 +13,23 @@ export default async function handler(req, res) {
     "categories.json",
     "countries.json",
     "logos.json",
-    "timezones.json"
+    "timezones.json",
+    "streams.json"
   ];
 
   try {
-    const [channels, feeds, languages, categories, countries, logos, timezones] =
+    const [channels, feeds, languages, categories, countries, logos, timezones, streams] =
       await Promise.all(files.map(f => fetch(API_BASE + f).then(r => r.json())));
 
-    console.log("Channels loaded:", channels.length);
-    console.log("Feeds loaded:", feeds.length);
-
+    // Maps for quick lookup
     const languagesMap = Object.fromEntries(languages.map(l => [l.code, l.name]));
     const categoriesMap = Object.fromEntries(categories.map(c => [c.id, c.name]));
     const countriesMap = Object.fromEntries(countries.map(c => [c.code, c.name]));
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
 
+    // Filter channels if query
     let filteredChannels = channels;
-
     if (channel) {
       const q = channel.toLowerCase();
       filteredChannels = channels.filter(c => (c.name || "").toLowerCase().includes(q));
@@ -41,16 +40,31 @@ export default async function handler(req, res) {
       if (!isNaN(n)) filteredChannels = filteredChannels.slice(0, n);
     }
 
+    // Merge streams into channels
     const merged = filteredChannels.map(ch => {
-      const chFeeds = feeds.filter(f => f.channel === ch.id).map(f => ({
-        id: f.id,
-        name: f.name,
-        url: f.url,
-        format: f.format,
-        languages: f.languages?.map(code => languagesMap[code] || code) || [],
-        broadcast_area: f.broadcast_area || [],
-        timezones: f.timezones || []
+      // All streams for this channel
+      const chStreams = streams.filter(s => s.channel === ch.id).map(s => ({
+        id: s.quality || "SD",
+        name: s.quality || "SD",
+        is_main: s.quality === "SD",
+        broadcast_area: ch.broadcast_area || [],
+        timezones: ch.timezones?.map(t => timezonesMap[t] || t) || [],
+        languages: ch.languages?.map(code => languagesMap[code] || code) || [],
+        format: s.quality || "576i",
+        url: s.url || null
       }));
+
+      // If no streams, still provide a placeholder SD
+      const streamsData = chStreams.length ? chStreams : [{
+        id: "SD",
+        name: "SD",
+        is_main: true,
+        broadcast_area: ch.broadcast_area || [],
+        timezones: ch.timezones?.map(t => timezonesMap[t] || t) || [],
+        languages: ch.languages?.map(code => languagesMap[code] || code) || [],
+        format: "576i",
+        url: null
+      }];
 
       return {
         id: ch.id,
@@ -67,7 +81,7 @@ export default async function handler(req, res) {
         launched: ch.launched || null,
         website: ch.website || null,
         logo: logosMap[ch.id] || null,
-        feeds: chFeeds
+        streams: streamsData
       };
     });
 
