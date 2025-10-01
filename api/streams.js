@@ -28,11 +28,8 @@ export default async function handler(req, res) {
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
 
-    const MAX_LIMIT = 50;
-
+    // Filter channels by language if provided
     let filteredChannels = channels;
-
-    // Filter by language if provided
     if (language) {
       const langQuery = language.toLowerCase();
       filteredChannels = filteredChannels.filter(c => {
@@ -45,7 +42,11 @@ export default async function handler(req, res) {
       });
     }
 
-    filteredChannels = filteredChannels.slice(0, MAX_LIMIT);
+    // Strictly respect the 'limit' query (default to all if not provided)
+    const numericLimit = parseInt(limit, 10);
+    if (!isNaN(numericLimit) && numericLimit > 0) {
+      filteredChannels = filteredChannels.slice(0, numericLimit);
+    }
 
     const data = filteredChannels.map(ch => {
       const chFeeds = feeds.filter(f => f.channel === ch.id);
