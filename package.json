@@ -1,5 +1,5 @@
 {
-  "name": "iptv-streams-api",
+  "name": "iptv-vercel-api",
   "version": "1.0.0",
   "description": "Vercel serverless API for fetching IPTV streams with filters and limits",
   "main": "index.js",
@@ -7,17 +7,8 @@
     "dev": "vercel dev",
     "start": "vercel dev"
   },
-  "keywords": [
-    "iptv",
-    "streams",
-    "api",
-    "vercel",
-    "serverless"
-  ],
+  "keywords": ["iptv", "streams", "api", "vercel", "serverless"],
   "author": "Sanjay",
   "license": "MIT",
-  "dependencies": {
-    "node-fetch": "^3.4.1"
-  },
   "type": "module"
 }
