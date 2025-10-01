@@ -5,78 +5,106 @@ export default async function handler(req, res) {
 
   const { limit, channel } = req.query;
 
+  const baseUrl = 'https://iptv-org.github.io/api';
+
+  // List of all JSON files
+  const files = [
+    'blocklist.json',
+    'categories.json',
+    'channels.json',
+    'countries.json',
+    'languages.json',
+    'regions.json',
+    'subdivisions.json',
+    'feeds.json',
+    'logos.json',
+    'timezones.json',
+    'guides.json',
+    'streams.json',
+    'cities.json'
+  ];
+
   try {
-    const response = await fetch('https://iptv-org.github.io/api/streams.json');
-    let streams = await response.json();
+    // Download all JSONs in parallel
+    const [blocklist, categories, channels, countries, languages, regions, subdivisions, feeds, logos, timezones, guides, streams, cities] =
+      await Promise.all(files.map(f => fetch(`${baseUrl}/${f}`).then(r => r.json())));
 
-    // Filter by channel name if provided
-    if (channel) {
-      streams = streams.filter(
-        s => s.channel && s.channel.toLowerCase().includes(channel.toLowerCase())
-      );
-    }
+    // Convert some arrays to maps for faster lookup
+    const channelsMap = {};
+    channels.forEach(c => channelsMap[c.id] = c);
 
-    // Group streams by channel
-    const grouped = {};
-    streams.forEach(s => {
-      const key = s.channel || s.title || `unknown-${Math.random()}`;
-      if (!grouped[key]) grouped[key] = [];
-      grouped[key].push(s);
-    });
+    const categoriesMap = {};
+    categories.forEach(c => categoriesMap[c.id] = c);
 
-    // Build structured array
-    let structured = Object.keys(grouped).map((channelKey, index) => {
-      const channelStreams = grouped[channelKey];
+    const countriesMap = {};
+    countries.forEach(c => countriesMap[c.id] = c);
 
-      // Sort by quality (assuming higher numbers = higher quality)
-      const sortedStreams = channelStreams.sort((a, b) => {
-        const qA = parseInt(a.quality) || 0;
-        const qB = parseInt(b.quality) || 0;
-        return qB - qA;
-      });
+    const languagesMap = {};
+    languages.forEach(l => languagesMap[l.id] = l);
 
-      // Map streams dynamically
-      const streamsArray = sortedStreams.map((s, i) => ({
-        id: s.quality || `stream-${i + 1}`,
-        name: s.quality || `Stream ${i + 1}`,
-        is_main: i === 0, // highest quality as main
-        broadcast_area: s.broadcast_area || null,
-        timezones: s.timezones || null,
-        languages: s.languages || null,
-        format: s.quality || null,
-        url: s.url || null
-      }));
+    const timezonesMap = {};
+    timezones.forEach(t => timezonesMap[t.id] = t);
+
+    const logosMap = {};
+    logos.forEach(l => logosMap[l.channel_id] = l);
+
+    // Merge streams with channel metadata
+    let merged = streams.map((s, index) => {
+      const ch = channelsMap[s.channel] || {};
+
+      // Map languages
+      const channelLanguages = (ch.languages || []).map(id => languagesMap[id]?.name).filter(Boolean);
+
+      // Map categories
+      const channelCategories = (ch.categories || []).map(id => categoriesMap[id]?.name).filter(Boolean);
 
       return {
         id: index + 1,
-        channel_id: channelKey,
-        name: channelStreams[0].title || channelKey,
-        alt_names: channelStreams[0].channel_alt || null,
-        network: channelStreams[0].network || null,
-        owners: channelStreams[0].owners || null,
-        country: channelStreams[0].country || null,
-        broadcast_area: channelStreams[0].broadcast_area || null,
-        timezones: channelStreams[0].timezones || null,
-        languages: channelStreams[0].languages || null,
-        categories: channelStreams[0].categories || null,
-        is_nsfw: channelStreams[0].is_nsfw || false,
-        formats: channelStreams.map(s => s.quality).filter(Boolean),
-        launched: channelStreams[0].launched || null,
-        website: channelStreams[0].website || null,
-        streams: streamsArray
+        channel_id: s.channel,
+        name: ch.name || s.title || s.channel,
+        alt_names: ch.alt_names || null,
+        network: ch.network || null,
+        owners: ch.owners || null,
+        country: countriesMap[ch.country]?.name || null,
+        broadcast_area: ch.broadcast_area || null,
+        timezones: (ch.timezones || []).map(t => timezonesMap[t]?.name).filter(Boolean) || null,
+        languages: channelLanguages || null,
+        categories: channelCategories || null,
+        is_nsfw: ch.is_nsfw || false,
+        formats: [s.quality].filter(Boolean),
+        launched: ch.launched || null,
+        website: ch.website || null,
+        logo: logosMap[s.channel]?.url || null,
+        streams: [
+          {
+            id: s.quality || 'SD',
+            name: s.quality || 'SD',
+            is_main: true,
+            broadcast_area: ch.broadcast_area || null,
+            timezones: (ch.timezones || []).map(t => timezonesMap[t]?.name).filter(Boolean) || null,
+            languages: channelLanguages || null,
+            format: s.quality || '576i',
+            url: s.url || null
+          }
+        ]
       };
     });
 
-    // Apply limit if provided
-    if (limit) {
-      const n = parseInt(limit);
-      if (!isNaN(n)) structured = structured.slice(0, n);
+    // Filter by channel name
+    if (channel) {
+      merged = merged.filter(c => c.name.toLowerCase().includes(channel.toLowerCase()));
     }
 
-    res.status(200).json({ count: structured.length, data: structured });
+    // Apply limit
+    if (limit) {
+      const n = parseInt(limit);
+      if (!isNaN(n)) merged = merged.slice(0, n);
+    }
+
+    res.status(200).json({ count: merged.length, data: merged });
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Failed to fetch or process streams' });
+    res.status(500).json({ error: 'Failed to fetch or merge IPTV data' });
   }
 }
