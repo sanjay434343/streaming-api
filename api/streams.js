@@ -3,7 +3,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  const { limit, channel } = req.query;
+  const { limit, channel, language, quality, country, category, network, owner } = req.query;
   const API_BASE = "https://iptv-org.github.io/api/";
 
   const files = [
@@ -27,28 +27,16 @@ export default async function handler(req, res) {
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
 
-    // Filter channels if query
-    let filteredChannels = channels;
-    if (channel) {
-      const q = channel.toLowerCase();
-      filteredChannels = channels.filter(c => (c.name || "").toLowerCase().includes(q));
-    }
-
-    if (limit) {
-      const n = parseInt(limit);
-      if (!isNaN(n)) filteredChannels = filteredChannels.slice(0, n);
-    }
-
-    const merged = filteredChannels.map(ch => {
-      // All feeds for this channel
+    // Merge feeds and streams
+    const mergedChannels = channels.map(ch => {
       const chFeeds = feeds.filter(f => f.channel === ch.id);
 
-      // Get languages from channel + all feeds (merged and unique)
+      // Collect languages from channel and feeds
       let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
       const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
-      langs = [...new Set([...langs, ...feedLangs])]; // merge unique
+      langs = [...new Set([...langs, ...feedLangs])];
 
-      // Merge streams from feeds
+      // Merge streams
       const chStreams = chFeeds.flatMap(f => {
         const fStreams = streams.filter(s => s.feed === f.id || s.channel === f.channel).map(s => ({
           id: s.quality || "SD",
@@ -87,23 +75,37 @@ export default async function handler(req, res) {
         launched: ch.launched || null,
         website: ch.website || null,
         logo: logosMap[ch.id] || null,
-        streams: chStreams.length ? chStreams : [{
-          id: "SD",
-          name: "SD",
-          is_main: true,
-          broadcast_area: ch.broadcast_area || [],
-          timezones: ch.timezones?.map(t => timezonesMap[t] || t) || [],
-          languages: langs,
-          format: "576i",
-          url: null
-        }]
+        streams: chStreams
       };
     });
 
-    res.status(200).json({ count: merged.length, data: merged });
+    // Apply advanced filtering
+    let filtered = mergedChannels.filter(ch => {
+      if (channel && !ch.name.toLowerCase().includes(channel.toLowerCase())) return false;
+      if (language && !ch.languages.some(l => l.toLowerCase().includes(language.toLowerCase()))) return false;
+      if (category && !ch.categories.some(c => c.toLowerCase().includes(category.toLowerCase()))) return false;
+      if (country && (!ch.country || !ch.country.toLowerCase().includes(country.toLowerCase()))) return false;
+      if (network && (!ch.network || !ch.network.toLowerCase().includes(network.toLowerCase()))) return false;
+      if (owner && !ch.owners.some(o => o.toLowerCase().includes(owner.toLowerCase()))) return false;
 
-  } catch (error) {
-    console.error(error);
+      if (quality) {
+        const q = quality.toLowerCase();
+        if (!ch.streams.some(s => s.format.toLowerCase().includes(q))) return false;
+      }
+
+      return true;
+    });
+
+    // Apply limit
+    if (limit && limit.toLowerCase() !== "all") {
+      const n = parseInt(limit);
+      if (!isNaN(n)) filtered = filtered.slice(0, n);
+    }
+
+    res.status(200).json({ count: filtered.length, data: filtered });
+
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Failed to fetch or merge IPTV data" });
   }
 }
