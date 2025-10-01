@@ -17,31 +17,30 @@ export default async function handler(req, res) {
   ];
 
   try {
-    // Fetch all files in parallel
     const [channels, feeds, languages, categories, countries, logos, timezones] =
       await Promise.all(files.map(f => fetch(API_BASE + f).then(r => r.json())));
 
-    // Map data for faster lookup
+    console.log("Channels loaded:", channels.length);
+    console.log("Feeds loaded:", feeds.length);
+
     const languagesMap = Object.fromEntries(languages.map(l => [l.code, l.name]));
     const categoriesMap = Object.fromEntries(categories.map(c => [c.id, c.name]));
     const countriesMap = Object.fromEntries(countries.map(c => [c.code, c.name]));
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
 
-    // Filter channels if query
     let filteredChannels = channels;
+
     if (channel) {
       const q = channel.toLowerCase();
-      filteredChannels = channels.filter(c => c.name && c.name.toLowerCase().includes(q));
+      filteredChannels = channels.filter(c => (c.name || "").toLowerCase().includes(q));
     }
 
-    // Apply limit
     if (limit) {
       const n = parseInt(limit);
       if (!isNaN(n)) filteredChannels = filteredChannels.slice(0, n);
     }
 
-    // Merge each channel with feeds, logos, languages, categories
     const merged = filteredChannels.map(ch => {
       const chFeeds = feeds.filter(f => f.channel === ch.id).map(f => ({
         id: f.id,
@@ -55,7 +54,7 @@ export default async function handler(req, res) {
 
       return {
         id: ch.id,
-        name: ch.name,
+        name: ch.name || "Unknown",
         alt_names: ch.alt_names || null,
         network: ch.network || null,
         owners: ch.owners || [],
