@@ -3,7 +3,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  const { limit, channel } = req.query;
+  const { limit, channel, language } = req.query;
   const API_BASE = "https://iptv-org.github.io/api/";
 
   const files = [
@@ -27,11 +27,24 @@ export default async function handler(req, res) {
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
 
-    // Filter channels if query
+    // Filter channels based on query
     let filteredChannels = channels;
+
     if (channel) {
       const q = channel.toLowerCase();
-      filteredChannels = channels.filter(c => (c.name || "").toLowerCase().includes(q));
+      filteredChannels = filteredChannels.filter(c => (c.name || "").toLowerCase().includes(q));
+    }
+
+    if (language) {
+      const langQuery = language.toLowerCase();
+      filteredChannels = filteredChannels.filter(c => {
+        const chLangs = c.languages?.map(code => (languagesMap[code] || code).toLowerCase()) || [];
+        const feedLangs = feeds
+          .filter(f => f.channel === c.id)
+          .flatMap(f => f.languages?.map(code => (languagesMap[code] || code).toLowerCase()) || []);
+        const allLangs = [...new Set([...chLangs, ...feedLangs])];
+        return allLangs.includes(langQuery);
+      });
     }
 
     if (limit) {
@@ -40,15 +53,12 @@ export default async function handler(req, res) {
     }
 
     const merged = filteredChannels.map(ch => {
-      // All feeds for this channel
       const chFeeds = feeds.filter(f => f.channel === ch.id);
 
-      // Get languages from channel + all feeds (merged and unique)
       let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
       const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
-      langs = [...new Set([...langs, ...feedLangs])]; // merge unique
+      langs = [...new Set([...langs, ...feedLangs])];
 
-      // Merge streams from feeds
       const chStreams = chFeeds.flatMap(f => {
         const fStreams = streams.filter(s => s.feed === f.id || s.channel === f.channel).map(s => ({
           id: s.quality || "SD",
