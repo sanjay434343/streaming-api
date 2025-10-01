@@ -14,18 +14,21 @@ export default async function handler(req, res) {
     "categories.json",
     "countries.json",
     "timezones.json",
-    "streams.json"
+    "streams.json",
+    "logos.json"
   ];
 
   try {
-    const [channels, feeds, languages, categories, countries, timezones, streams] =
+    const [channels, feeds, languages, categories, countries, timezones, streams, logos] =
       await Promise.all(files.map(f => fetch(API_BASE + f).then(r => r.json())));
 
     const languagesMap = Object.fromEntries(languages.map(l => [l.code, l.name]));
     const categoriesMap = Object.fromEntries(categories.map(c => [c.id, c.name]));
     const countriesMap = Object.fromEntries(countries.map(c => [c.code, c.name]));
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
+    const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
 
+    const MAX_SUGGESTIONS = 50;
     let suggestions = {
       channels: [],
       languages: [],
@@ -35,10 +38,10 @@ export default async function handler(req, res) {
     if (q) {
       const query = q.toLowerCase();
 
-      // Channels with full info + streams
+      // Channels with full info + streams + logos
       suggestions.channels = channels
         .filter(c => (c.name || "").toLowerCase().includes(query))
-        .slice(0, limit ? parseInt(limit) : 5)
+        .slice(0, MAX_SUGGESTIONS)
         .map(ch => {
           const chFeeds = feeds.filter(f => f.channel === ch.id);
 
@@ -73,6 +76,7 @@ export default async function handler(req, res) {
             country: countriesMap[ch.country] || null,
             languages: langs,
             categories: ch.categories?.map(cid => categoriesMap[cid] || cid) || [],
+            logo: logosMap[ch.id] || null,
             streams: chStreams
           };
         });
@@ -80,13 +84,13 @@ export default async function handler(req, res) {
       // Languages
       suggestions.languages = languages
         .filter(l => (l.name || "").toLowerCase().includes(query))
-        .slice(0, limit ? parseInt(limit) : 5)
+        .slice(0, MAX_SUGGESTIONS)
         .map(l => ({ code: l.code, name: l.name }));
 
       // Categories
       suggestions.categories = categories
         .filter(c => (c.name || "").toLowerCase().includes(query))
-        .slice(0, limit ? parseInt(limit) : 5)
+        .slice(0, MAX_SUGGESTIONS)
         .map(c => ({ id: c.id, name: c.name }));
     }
 
