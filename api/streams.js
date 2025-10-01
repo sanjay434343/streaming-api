@@ -3,7 +3,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  const { limit, channel } = req.query;
+  const { limit, channel, language } = req.query;
   const API_BASE = "https://iptv-org.github.io/api/";
 
   const files = [
@@ -29,24 +29,20 @@ export default async function handler(req, res) {
 
     // Filter channels if query
     let filteredChannels = channels;
+
     if (channel) {
       const q = channel.toLowerCase();
-      filteredChannels = channels.filter(c => (c.name || "").toLowerCase().includes(q));
+      filteredChannels = filteredChannels.filter(c => (c.name || "").toLowerCase().includes(q));
     }
 
-    if (limit) {
-      const n = parseInt(limit);
-      if (!isNaN(n)) filteredChannels = filteredChannels.slice(0, n);
-    }
-
-    const merged = filteredChannels.map(ch => {
-      // All feeds for this channel
+    // Merge feeds and streams
+    const enrichedChannels = filteredChannels.map(ch => {
       const chFeeds = feeds.filter(f => f.channel === ch.id);
 
-      // Get languages from channel + all feeds (merged and unique)
+      // Merge languages from channel and feeds
       let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
       const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
-      langs = [...new Set([...langs, ...feedLangs])]; // merge unique
+      langs = [...new Set([...langs, ...feedLangs])];
 
       // Merge streams from feeds
       const chStreams = chFeeds.flatMap(f => {
@@ -100,7 +96,23 @@ export default async function handler(req, res) {
       };
     });
 
-    res.status(200).json({ count: merged.length, data: merged });
+    // Apply language filter
+    let finalData = enrichedChannels;
+    if (language) {
+      const langQuery = language.toLowerCase();
+      finalData = enrichedChannels.filter(ch =>
+        ch.languages.some(l => l.toLowerCase().includes(langQuery)) ||
+        ch.streams.some(s => s.languages?.some(l => l.toLowerCase().includes(langQuery)))
+      );
+    }
+
+    // Apply limit
+    if (limit && limit.toLowerCase() !== "all") {
+      const n = parseInt(limit);
+      if (!isNaN(n)) finalData = finalData.slice(0, n);
+    }
+
+    res.status(200).json({ count: finalData.length, data: finalData });
 
   } catch (error) {
     console.error(error);
