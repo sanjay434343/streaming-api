@@ -9,19 +9,22 @@ export default async function handler(req, res) {
 
   const files = [
     "channels.json",
+    "feeds.json",
     "languages.json",
     "categories.json",
+    "countries.json",
+    "timezones.json",
     "streams.json"
   ];
 
   try {
-    const [channels, languages, categories, streams] = await Promise.all(
-      files.map(f => fetch(API_BASE + f).then(r => r.json()))
-    );
+    const [channels, feeds, languages, categories, countries, timezones, streams] =
+      await Promise.all(files.map(f => fetch(API_BASE + f).then(r => r.json())));
 
-    // Map languages and categories for name lookups
     const languagesMap = Object.fromEntries(languages.map(l => [l.code, l.name]));
     const categoriesMap = Object.fromEntries(categories.map(c => [c.id, c.name]));
+    const countriesMap = Object.fromEntries(countries.map(c => [c.code, c.name]));
+    const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
 
     let suggestions = {
       channels: [],
@@ -32,21 +35,45 @@ export default async function handler(req, res) {
     if (q) {
       const query = q.toLowerCase();
 
-      // Channels with sample stream links
+      // Channels with full info + streams
       suggestions.channels = channels
         .filter(c => (c.name || "").toLowerCase().includes(query))
         .slice(0, limit ? parseInt(limit) : 5)
-        .map(c => {
-          // Find up to 3 streams for this channel
-          const chStreams = streams
-            .filter(s => s.channel === c.id || s.feed === c.id)
-            .slice(0, 3)
-            .map(s => ({ url: s.url, quality: s.quality || "SD" }));
+        .map(ch => {
+          const chFeeds = feeds.filter(f => f.channel === ch.id);
+
+          // Merge languages from channel + feeds
+          let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
+          const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
+          langs = [...new Set([...langs, ...feedLangs])];
+
+          // Merge streams from feeds
+          const chStreams = chFeeds.flatMap(f => {
+            const fStreams = streams
+              .filter(s => s.feed === f.id || s.channel === f.channel)
+              .map(s => ({
+                url: s.url || null,
+                quality: s.quality || "SD",
+                broadcast_area: f.broadcast_area || [],
+                timezones: f.timezones?.map(t => timezonesMap[t] || t) || [],
+                languages: f.languages?.map(code => languagesMap[code] || code) || []
+              }));
+            return fStreams.length ? fStreams : [{
+              url: null,
+              quality: "SD",
+              broadcast_area: f.broadcast_area || [],
+              timezones: f.timezones?.map(t => timezonesMap[t] || t) || [],
+              languages: f.languages?.map(code => languagesMap[code] || code) || []
+            }];
+          });
 
           return {
-            id: c.id,
-            name: c.name,
-            streams: chStreams.length ? chStreams : [{ url: null, quality: "SD" }]
+            id: ch.id,
+            name: ch.name,
+            country: countriesMap[ch.country] || null,
+            languages: langs,
+            categories: ch.categories?.map(cid => categoriesMap[cid] || cid) || [],
+            streams: chStreams
           };
         });
 
