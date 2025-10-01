@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  const { q, limit } = req.query; // q = query string from user
+  const { limit, language } = req.query; 
   const API_BASE = "https://iptv-org.github.io/api/";
 
   const files = [
@@ -29,73 +29,67 @@ export default async function handler(req, res) {
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
 
     const MAX_SUGGESTIONS = 50;
-    let suggestions = {
-      channels: [],
-      languages: [],
-      categories: []
-    };
 
-    if (q) {
-      const query = q.toLowerCase();
-
-      // Channels with full info + streams + logos
-      suggestions.channels = channels
-        .filter(c => (c.name || "").toLowerCase().includes(query))
-        .slice(0, MAX_SUGGESTIONS)
-        .map(ch => {
-          const chFeeds = feeds.filter(f => f.channel === ch.id);
-
-          // Merge languages from channel + feeds
-          let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
-          const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
-          langs = [...new Set([...langs, ...feedLangs])];
-
-          // Merge streams from feeds
-          const chStreams = chFeeds.flatMap(f => {
-            const fStreams = streams
-              .filter(s => s.feed === f.id || s.channel === f.channel)
-              .map(s => ({
-                url: s.url || null,
-                quality: s.quality || "SD",
-                broadcast_area: f.broadcast_area || [],
-                timezones: f.timezones?.map(t => timezonesMap[t] || t) || [],
-                languages: f.languages?.map(code => languagesMap[code] || code) || []
-              }));
-            return fStreams.length ? fStreams : [{
-              url: null,
-              quality: "SD",
-              broadcast_area: f.broadcast_area || [],
-              timezones: f.timezones?.map(t => timezonesMap[t] || t) || [],
-              languages: f.languages?.map(code => languagesMap[code] || code) || []
-            }];
-          });
-
-          return {
-            id: ch.id,
-            name: ch.name,
-            country: countriesMap[ch.country] || null,
-            languages: langs,
-            categories: ch.categories?.map(cid => categoriesMap[cid] || cid) || [],
-            logo: logosMap[ch.id] || null,
-            streams: chStreams
-          };
-        });
-
-      // Languages
-      suggestions.languages = languages
-        .filter(l => (l.name || "").toLowerCase().includes(query))
-        .slice(0, MAX_SUGGESTIONS)
-        .map(l => ({ code: l.code, name: l.name }));
-
-      // Categories
-      suggestions.categories = categories
-        .filter(c => (c.name || "").toLowerCase().includes(query))
-        .slice(0, MAX_SUGGESTIONS)
-        .map(c => ({ id: c.id, name: c.name }));
+    // Filter channels by language if provided
+    let filteredChannels = channels;
+    if (language) {
+      const langQuery = language.toLowerCase();
+      filteredChannels = channels.filter(c => {
+        const chLangs = c.languages?.map(code => (languagesMap[code] || code).toLowerCase()) || [];
+        const feedLangs = feeds
+          .filter(f => f.channel === c.id)
+          .flatMap(f => f.languages?.map(code => (languagesMap[code] || code).toLowerCase()) || []);
+        const allLangs = [...new Set([...chLangs, ...feedLangs])];
+        return allLangs.includes(langQuery);
+      });
     }
 
+    // Apply limit (max 50)
+    const n = Math.min(MAX_SUGGESTIONS, limit ? parseInt(limit) : MAX_SUGGESTIONS);
+    filteredChannels = filteredChannels.slice(0, n);
+
+    // Prepare suggestions
+    const suggestions = filteredChannels.map(ch => {
+      const chFeeds = feeds.filter(f => f.channel === ch.id);
+
+      // Merge languages from channel + feeds
+      let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
+      const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
+      langs = [...new Set([...langs, ...feedLangs])];
+
+      // Merge streams from feeds
+      const chStreams = chFeeds.flatMap(f => {
+        const fStreams = streams
+          .filter(s => s.feed === f.id || s.channel === f.channel)
+          .map(s => ({
+            url: s.url || null,
+            quality: s.quality || "SD",
+            broadcast_area: f.broadcast_area || [],
+            timezones: f.timezones?.map(t => timezonesMap[t] || t) || [],
+            languages: f.languages?.map(code => languagesMap[code] || code) || []
+          }));
+        return fStreams.length ? fStreams : [{
+          url: null,
+          quality: "SD",
+          broadcast_area: f.broadcast_area || [],
+          timezones: f.timezones?.map(t => timezonesMap[t] || t) || [],
+          languages: f.languages?.map(code => languagesMap[code] || code) || []
+        }];
+      });
+
+      return {
+        id: ch.id,
+        name: ch.name,
+        country: countriesMap[ch.country] || null,
+        languages: langs,
+        categories: ch.categories?.map(cid => categoriesMap[cid] || cid) || [],
+        logo: logosMap[ch.id] || null,
+        streams: chStreams
+      };
+    });
+
     res.status(200).json({
-      count: suggestions.channels.length + suggestions.languages.length + suggestions.categories.length,
+      count: suggestions.length,
       suggestions
     });
 
