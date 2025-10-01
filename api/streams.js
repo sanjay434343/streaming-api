@@ -4,32 +4,23 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   const { limit, channel } = req.query;
-
   const baseUrl = 'https://iptv-org.github.io/api';
 
-  // List of all JSON files
   const files = [
-    'blocklist.json',
-    'categories.json',
     'channels.json',
+    'categories.json',
     'countries.json',
     'languages.json',
-    'regions.json',
-    'subdivisions.json',
-    'feeds.json',
-    'logos.json',
     'timezones.json',
-    'guides.json',
-    'streams.json',
-    'cities.json'
+    'logos.json',
+    'streams.json'
   ];
 
   try {
-    // Download all JSONs in parallel
-    const [blocklist, categories, channels, countries, languages, regions, subdivisions, feeds, logos, timezones, guides, streams, cities] =
+    const [channels, categories, countries, languages, timezones, logos, streams] =
       await Promise.all(files.map(f => fetch(`${baseUrl}/${f}`).then(r => r.json())));
 
-    // Convert some arrays to maps for faster lookup
+    // Maps for quick lookup
     const channelsMap = {};
     channels.forEach(c => channelsMap[c.id] = c);
 
@@ -50,13 +41,11 @@ export default async function handler(req, res) {
 
     // Merge streams with channel metadata
     let merged = streams.map((s, index) => {
-      const ch = channelsMap[s.channel] || {};
+      const ch = channelsMap[s.channel] || {}; // Always include stream
 
-      // Map languages
       const channelLanguages = (ch.languages || []).map(id => languagesMap[id]?.name).filter(Boolean);
-
-      // Map categories
       const channelCategories = (ch.categories || []).map(id => categoriesMap[id]?.name).filter(Boolean);
+      const channelTimezones = (ch.timezones || []).map(id => timezonesMap[id]?.name).filter(Boolean);
 
       return {
         id: index + 1,
@@ -67,7 +56,7 @@ export default async function handler(req, res) {
         owners: ch.owners || null,
         country: countriesMap[ch.country]?.name || null,
         broadcast_area: ch.broadcast_area || null,
-        timezones: (ch.timezones || []).map(t => timezonesMap[t]?.name).filter(Boolean) || null,
+        timezones: channelTimezones || null,
         languages: channelLanguages || null,
         categories: channelCategories || null,
         is_nsfw: ch.is_nsfw || false,
@@ -81,7 +70,7 @@ export default async function handler(req, res) {
             name: s.quality || 'SD',
             is_main: true,
             broadcast_area: ch.broadcast_area || null,
-            timezones: (ch.timezones || []).map(t => timezonesMap[t]?.name).filter(Boolean) || null,
+            timezones: channelTimezones || null,
             languages: channelLanguages || null,
             format: s.quality || '576i',
             url: s.url || null
