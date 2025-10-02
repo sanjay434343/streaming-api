@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  const { limit, language } = req.query;
+  const { limit, language, channel } = req.query; // added 'channel'
   const API_BASE = "https://iptv-org.github.io/api/";
 
   const files = [
@@ -28,8 +28,17 @@ export default async function handler(req, res) {
     const timezonesMap = Object.fromEntries(timezones.map(t => [t.id, t.name]));
     const logosMap = Object.fromEntries(logos.map(l => [l.channel, l.url]));
 
-    // Filter channels by language if provided
     let filteredChannels = channels;
+
+    // Filter by channel name if provided (exact match, case-insensitive)
+    if (channel) {
+      const chQuery = channel.toLowerCase();
+      filteredChannels = filteredChannels.filter(c => 
+        c.name.toLowerCase() === chQuery || (c.alt_names || []).some(a => a.toLowerCase() === chQuery)
+      );
+    }
+
+    // Filter channels by language if provided
     if (language) {
       const langQuery = language.toLowerCase();
       filteredChannels = filteredChannels.filter(c => {
@@ -42,7 +51,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Strictly respect the 'limit' query (default to all if not provided)
+    // Respect limit strictly
     const numericLimit = parseInt(limit, 10);
     if (!isNaN(numericLimit) && numericLimit > 0) {
       filteredChannels = filteredChannels.slice(0, numericLimit);
@@ -51,12 +60,10 @@ export default async function handler(req, res) {
     const data = filteredChannels.map(ch => {
       const chFeeds = feeds.filter(f => f.channel === ch.id);
 
-      // Merge languages
       let langs = ch.languages?.map(code => languagesMap[code] || code) || [];
       const feedLangs = chFeeds.flatMap(f => f.languages?.map(code => languagesMap[code] || code) || []);
       langs = [...new Set([...langs, ...feedLangs])];
 
-      // Only include streams where stream.channel matches the channel id
       const chStreams = streams
         .filter(s => s.channel === ch.id)
         .map(s => ({
