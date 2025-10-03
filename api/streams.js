@@ -5,6 +5,17 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 let cache = null;
 let cacheTimestamp = 0;
 
+// Helper function to escape XML special characters
+function escapeXml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 export default async function handler(req, res) {
   // Enhanced CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -27,7 +38,8 @@ export default async function handler(req, res) {
     network, 
     nsfw,
     sort = "name",
-    order = "asc"
+    order = "asc",
+    export: exportFormat
   } = req.query;
 
   const API_BASE = "https://iptv-org.github.io/api/";
@@ -227,6 +239,137 @@ export default async function handler(req, res) {
       };
     });
 
+    // Handle export formats
+    if (exportFormat) {
+      const format = exportFormat.toLowerCase();
+      const timestamp = new Date().toISOString().split('T')[0];
+      const filename = `iptv-channels-${timestamp}`;
+
+      switch(format) {
+        case 'json':
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
+          res.setHeader('Content-Type', 'application/json');
+          return res.status(200).send(JSON.stringify({ 
+            count: data.length, 
+            total: channels.length,
+            exported_at: new Date().toISOString(),
+            data 
+          }, null, 2));
+
+        case 'csv':
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+          res.setHeader('Content-Type', 'text/csv');
+          
+          const csvHeaders = [
+            'ID', 'Name', 'Network', 'Country', 'Languages', 'Categories', 
+            'Is NSFW', 'Launched', 'Website', 'Logo', 'Stream URLs'
+          ];
+          
+          const csvRows = data.map(ch => [
+            ch.id,
+            `"${ch.name.replace(/"/g, '""')}"`,
+            `"${ch.network || ''}"`,
+            `"${ch.country || ''}"`,
+            `"${ch.languages.join(', ')}"`,
+            `"${ch.categories.join(', ')}"`,
+            ch.is_nsfw,
+            ch.launched || '',
+            `"${ch.website || ''}"`,
+            `"${ch.logo || ''}"`,
+            `"${ch.streams.map(s => s.url).filter(Boolean).join(' | ')}"`
+          ].join(','));
+          
+          const csv = [csvHeaders.join(','), ...csvRows].join('\n');
+          return res.status(200).send(csv);
+
+        case 'm3u':
+        case 'm3u8':
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}.m3u"`);
+          res.setHeader('Content-Type', 'audio/x-mpegurl');
+          
+          let m3u = '#EXTM3U\n';
+          data.forEach(ch => {
+            ch.streams.forEach(stream => {
+              if (stream.url) {
+                const attrs = [
+                  `tvg-id="${ch.id}"`,
+                  `tvg-name="${ch.name}"`,
+                  ch.logo ? `tvg-logo="${ch.logo}"` : '',
+                  ch.country ? `tvg-country="${ch.country}"` : '',
+                  ch.languages.length ? `tvg-language="${ch.languages[0]}"` : '',
+                  `group-title="${ch.categories[0] || 'General'}"`
+                ].filter(Boolean).join(' ');
+                
+                m3u += `#EXTINF:-1 ${attrs},${ch.name}\n`;
+                m3u += `${stream.url}\n`;
+              }
+            });
+          });
+          return res.status(200).send(m3u);
+
+        case 'xml':
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}.xml"`);
+          res.setHeader('Content-Type', 'application/xml');
+          
+          let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n';
+          data.forEach(ch => {
+            xml += '  <channel>\n';
+            xml += `    <id>${escapeXml(ch.id)}</id>\n`;
+            xml += `    <name>${escapeXml(ch.name)}</name>\n`;
+            if (ch.network) xml += `    <network>${escapeXml(ch.network)}</network>\n`;
+            if (ch.country) xml += `    <country>${escapeXml(ch.country)}</country>\n`;
+            xml += `    <languages>${escapeXml(ch.languages.join(', '))}</languages>\n`;
+            xml += `    <categories>${escapeXml(ch.categories.join(', '))}</categories>\n`;
+            xml += `    <nsfw>${ch.is_nsfw}</nsfw>\n`;
+            if (ch.logo) xml += `    <logo>${escapeXml(ch.logo)}</logo>\n`;
+            if (ch.website) xml += `    <website>${escapeXml(ch.website)}</website>\n`;
+            xml += '    <streams>\n';
+            ch.streams.forEach(s => {
+              if (s.url) {
+                xml += `      <stream quality="${escapeXml(s.quality || 'SD')}">${escapeXml(s.url)}</stream>\n`;
+              }
+            });
+            xml += '    </streams>\n';
+            xml += '  </channel>\n';
+          });
+          xml += '</channels>';
+          return res.status(200).send(xml);
+
+        case 'txt':
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}.txt"`);
+          res.setHeader('Content-Type', 'text/plain');
+          
+          let txt = `IPTV Channels Export\nGenerated: ${new Date().toISOString()}\n`;
+          txt += `Total Channels: ${data.length}\n\n`;
+          txt += '='.repeat(80) + '\n\n';
+          
+          data.forEach((ch, i) => {
+            txt += `[${i + 1}] ${ch.name}\n`;
+            txt += `    ID: ${ch.id}\n`;
+            if (ch.network) txt += `    Network: ${ch.network}\n`;
+            if (ch.country) txt += `    Country: ${ch.country}\n`;
+            if (ch.languages.length) txt += `    Languages: ${ch.languages.join(', ')}\n`;
+            if (ch.categories.length) txt += `    Categories: ${ch.categories.join(', ')}\n`;
+            if (ch.website) txt += `    Website: ${ch.website}\n`;
+            if (ch.streams.length) {
+              txt += `    Streams:\n`;
+              ch.streams.forEach(s => {
+                if (s.url) txt += `      - ${s.name}: ${s.url}\n`;
+              });
+            }
+            txt += '\n';
+          });
+          return res.status(200).send(txt);
+
+        default:
+          return res.status(400).json({ 
+            error: "Invalid export format",
+            supported: ["json", "csv", "m3u", "m3u8", "xml", "txt"]
+          });
+      }
+    }
+
+    // Normal JSON response
     res.status(200).json({ 
       count: data.length, 
       total: channels.length,
